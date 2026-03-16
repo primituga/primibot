@@ -5,94 +5,70 @@ services:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
-  
     ports:
       - "11434:11434"
-  
     volumes:
-      - type: bind
-        source: /media/ssd2t/dockerFiles/ollama/ollama-models
-        target: /root/.ollama
-        bind:
-          propagation: rprivate
-  
+      # Caminho genérico: salva os modelos na pasta 'data/ollama' dentro do projeto
+      - ./data/ollama:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
       - OLLAMA_KEEP_ALIVE=1m
       - OLLAMA_NUM_PARALLEL=1
       - OLLAMA_FS_SYNC=1
-  
-    #runtime: nvidia
-
+    
+    # Descomente as linhas abaixo se tiver uma placa NVIDIA configurada no Docker do Host
     #deploy:
     #  resources:
     #    reservations:
     #      devices:
     #        - capabilities: [gpu]
 
-  
     networks:
       - ollama-docker
-
 
   searxng:
     image: searxng/searxng:latest
     container_name: searxng
     restart: unless-stopped
-
     ports:
       - "8082:8080"
-
     environment:
-      #- SEARXNG_BASE_URL=http://localhost:8081/
       - SEARXNG_BASE_URL=http://searxng:8080/
       - SEARXNG_SETTINGS_URL=/etc/searxng/settings.yml
       - INSTANCE_NAME=searxng
       - SEARXNG_OUTGOING_FORMATS=json,plaintext
-
+      # Recomenda-se que o utilizador final troque esta chave
       - VALUE_SECRET=troque_esta_chave_por_uma_forte
-
     volumes:
-      - /media/ssd2t/dockerFiles/ollama/searxng:/etc/searxng
-
+      - ./data/searxng:/etc/searxng
     cap_drop:
       - ALL
-
     cap_add:
       - CHOWN
       - SETGID
       - SETUID
-
     networks:
       - ollama-docker
-
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
     restart: unless-stopped
-
     depends_on:
       - ollama
       - searxng
-
     ports:
       - "3001:8080"
-
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
       - WEBUI_AUTH=False
-      - WEBUI_NAME=Opensource Geeks AI
-
+      - WEBUI_NAME=PrimiBot UI
       - ENABLE_RAG_WEB_SEARCH=True
       - RAG_WEB_SEARCH_ENGINE=searxng
       - RAG_WEB_SEARCH_RESULT_COUNT=8
-      #- SEARXNG_QUERY_URL=http://searxng:8080/search?q=<query>&format=json
       - SEARXNG_QUERY_URL=http://searxng:8080/search?q=<query>&format=json
-
     volumes:
-      - /media/ssd2t/dockerFiles/ollama/open-webui:/app/backend/data
-
+      - ./data/open-webui:/app/backend/data
     networks:
       - ollama-docker
 
@@ -100,7 +76,6 @@ services:
     image: flowiseai/flowise:latest
     container_name: flowise
     restart: unless-stopped
-    #network_mode: host
     ports:
       - "3000:3000"
     networks:
@@ -108,31 +83,30 @@ services:
     depends_on:
       - ollama
       - searxng
-      
     environment:
       - FLOWISE_USERNAME=admin
       - FLOWISE_PASSWORD=admin
       - OLLAMA_BASE_URL=http://ollama:11434
     volumes:
-      - /media/ssd2t/dockerFiles/flowise:/root/.flowise
+      - ./data/flowise:/root/.flowise
 
   redis:
-      image: redis:alpine
-      container_name: redis
-      restart: unless-stopped
-      networks:
-        - ollama-docker
-      
-  agent:
-    image: python:3.11-slim
-    container_name: langchain-agent
-    working_dir: /app
+    image: redis:alpine
+    container_name: redis
     restart: unless-stopped
-    ports:
-      - "5000:5000"
+    networks:
+      - ollama-docker
+
+  agent:
+    # Como você criou um Dockerfile para o bot, a forma correta e limpa no GitHub 
+    # é dizer ao Compose para construir a imagem a partir da pasta local.
+    build: 
+      context: ./langchain-agent
+    container_name: langchain-agent
+    restart: unless-stopped
     volumes:
-      - /media/ssd2t/dockerFiles/langchain-agent:/app
-    command: bash -c "pip install --no-cache-dir -r requirements.txt && python agent.py"
+      # Sincroniza o código local com o container para testes rápidos
+      - ./langchain-agent:/app
     networks:
       - ollama-docker
     depends_on:
@@ -140,10 +114,7 @@ services:
       - searxng
       - flowise
       - redis
-    stdin_open: true
-    tty: true
 
 networks:
   ollama-docker:
     driver: bridge
-
