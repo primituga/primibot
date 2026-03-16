@@ -5,6 +5,7 @@
 ![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?style=for-the-badge&logo=discord)
 ![Twitch](https://img.shields.io/badge/Twitch-Bot-9146FF?style=for-the-badge&logo=twitch)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+[![Buy me a beer](https://img.shields.io/badge/Buy_me_a_beer-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://paypal.me/primiSC)
 
 **PrimiBot** is a next-generation AI assistant designed to operate simultaneously on **Twitch** and **Discord**. 
 
@@ -100,6 +101,14 @@ Contributions are always welcome! If you want to improve the fallback logic, add
 3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`).
 4. Push to the Branch (`git push origin feature/AmazingFeature`).
 5. Open a Pull Request.
+
+---
+
+## 🍻 Support the Project
+
+If PrimiBot made your streams more interactive or saved you some API tokens, consider buying me a beer! It helps keep the Raspberry Pi running and fuels the late-night coding sessions.
+
+[![Donate with PayPal](https://img.shields.io/badge/Donate-PayPal-blue.svg?style=for-the-badge&logo=paypal)](https://paypal.me/primiSC)
 
 ---
 
