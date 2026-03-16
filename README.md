@@ -44,7 +44,7 @@ To run this bot, you will need:
 
 **1. Clone the repository:**
 ```bash
-git clone [https://github.com/YOUR_USERNAME/primibot.git](https://github.com/YOUR_USERNAME/primibot.git)
+git clone [https://github.com/primituga/primibot.git](https://github.com/primituga/primibot.git)
 cd primibot
 ```
 
