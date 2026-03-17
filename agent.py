@@ -29,7 +29,8 @@ FLOW_URL = f"http://flowise:3000/api/v1/prediction/{FLOW_ID}"
 SEARXNG_URL = "http://searxng:8080/search"
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
-CANAIS_PARA_ENTRAR = os.getenv("TWITCH_CHANNEL", "primisc").split(",")
+CANAIS_PARA_ENTRAR = os.getenv("TWITCH_CHANNEL").split(",")
+
 GROQ_MODELS = [
     "llama-3.3-70b-versatile", 
     "llama-3.1-8b-instant", 
@@ -94,6 +95,37 @@ async def send_discord_chunks(channel, text):
         
         # Prepara o resto do texto para o próximo ciclo, removendo espaços no início
         text = text[split_at:].lstrip()
+
+
+async def send_twitch_chunks(channel, author_name, text):
+    """Divide mensagens longas para a Twitch sem cortar palavras."""
+    if not text: return
+    
+    prefix = f"@{author_name}: "
+    chunk_size = 480 - len(prefix)
+    primeira_mensagem = True
+    
+    while len(text) > 0:
+        if len(text) <= chunk_size:
+            msg = f"{prefix}{text}" if primeira_mensagem else text
+            await channel.send(msg)
+            break
+        
+        # Procura o último espaço para não cortar a palavra a meio
+        split_at = text.rfind(' ', 0, chunk_size)
+        if split_at == -1:
+            split_at = chunk_size
+            
+        chunk = text[:split_at]
+        msg = f"{prefix}{chunk}" if primeira_mensagem else chunk
+        await channel.send(msg)
+        
+        text = text[split_at:].lstrip()
+        primeira_mensagem = False
+        chunk_size = 480 # Aumenta o espaço porque o prefixo já não é usado
+        
+        # 🚨 VITAL: Pausa de 1.5s entre mensagens para a Twitch não banir o bot por Spam
+        await asyncio.sleep(1.5)
 
 # --- Lógica de IA (Resiliência Total) ---
 async def ask_ai_logic(question, session_id):
@@ -188,16 +220,26 @@ class MyTwitchBot(twitch_commands.Bot):
 
     async def event_message(self, message):
         if message.echo or message.author is None: return
+        # Isto diz à biblioteca para processar comandos oficiais
         await self.handle_commands(message)
 
-        if message.content.startswith("!ai "):
-            q = message.content.replace("!ai ", "").strip()
-            sid = f"twitch_{message.channel.name}_{message.author.name}"
-            ans = await ask_ai_logic(q, sid)
-            
-            # Divide e garante que a Twitch não corte a mensagem no meio da palavra (Limite seguro de 480)
-            resposta_segura = ans[:480] + ("..." if len(ans) > 480 else "")
-            await message.channel.send(f"@{message.author.name}: {resposta_segura}")
+    # ✨ O Segredo para esconder os erros de "Command Not Found"
+    async def event_command_error(self, context, error):
+        if isinstance(error, twitch_commands.CommandNotFound):
+            return  # Se alguém escrever "!ola", o bot ignora em vez de dar erro
+        logger.error(f"Erro Twitch: {error}")
+
+    # Transformamos o !ai num comando oficial!
+    @twitch_commands.command(name='ai')
+    async def ask_ai(self, ctx):
+        q = ctx.message.content.replace("!ai ", "").strip()
+        if not q: return
+        
+        sid = f"twitch_{ctx.channel.name}_{ctx.author.name}"
+        ans = await ask_ai_logic(q, sid)
+        
+        # Usa a nossa nova função inteligente de divisão
+        await send_twitch_chunks(ctx.channel, ctx.author.name, ans)
 
     @twitch_commands.command(name='ai_reset')
     async def reset_ai(self, ctx):
@@ -215,7 +257,14 @@ async def main():
         logger.error("Nenhum token fornecido! Saindo...")
         return
         
-    await asyncio.gather(*tasks)
+    # 🔥 A MAGIA: return_exceptions=True cria compartimentos estanques!
+    # Se a Twitch explodir por tokens errados, o Discord continua vivo e vice-versa.
+    resultados = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Verifica se algum deles crashou e avisa no terminal sem matar o programa
+    for res in resultados:
+        if isinstance(res, Exception):
+            logger.error(f"🚨 Alerta Crítico: Um dos bots falhou ao arrancar -> {res}")
 
 if __name__ == "__main__":
     try:
