@@ -124,7 +124,7 @@ async def send_twitch_chunks(channel, author_name, text):
         primeira_mensagem = False
         chunk_size = 480 # Aumenta o espaço porque o prefixo já não é usado
         
-        # 🚨 VITAL: Pausa de 1.5s entre mensagens para a Twitch não banir o bot por Spam
+        # VITAL: Pausa de 1.5s entre mensagens para a Twitch não banir o bot por Spam
         await asyncio.sleep(1.5)
 
 # --- Lógica de IA (Resiliência Total) ---
@@ -223,7 +223,7 @@ class MyTwitchBot(twitch_commands.Bot):
         # Isto diz à biblioteca para processar comandos oficiais
         await self.handle_commands(message)
 
-    # ✨ O Segredo para esconder os erros de "Command Not Found"
+    # Esconder os erros de "Command Not Found"
     async def event_command_error(self, context, error):
         if isinstance(error, twitch_commands.CommandNotFound):
             return  # Se alguém escrever "!ola", o bot ignora em vez de dar erro
@@ -257,7 +257,7 @@ async def main():
         logger.error("Nenhum token fornecido! Saindo...")
         return
         
-    # 🔥 A MAGIA: return_exceptions=True cria compartimentos estanques!
+    # A MAGIA: return_exceptions=True cria compartimentos estanques!
     # Se a Twitch explodir por tokens errados, o Discord continua vivo e vice-versa.
     resultados = await asyncio.gather(*tasks, return_exceptions=True)
     
