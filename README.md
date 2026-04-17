@@ -1,11 +1,11 @@
 # PrimiBot: Multi-Platform AI Assistant with Local & Cloud Fallback
 
-![Python](https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker)
-![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?style=for-the-badge&logo=discord)
-![Twitch](https://img.shields.io/badge/Twitch-Bot-9146FF?style=for-the-badge&logo=twitch)
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-[![Buy me a beer](https://img.shields.io/badge/Buy_me_a_beer-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://paypal.me/primiSC)
+![Python](https://img.shields.io/badge/Python-3.11-blue?style=flat-square&logo=python)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker)
+![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?style=flat-square&logo=discord)
+![Twitch](https://img.shields.io/badge/Twitch-Bot-9146FF?style=flat-square&logo=twitch)
+![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+[![Buy me a beer](https://img.shields.io/badge/Buy_me_a_beer-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://paypal.me/primiSC)
 
 PrimiBot is an AI-powered assistant that runs simultaneously on **Twitch** and **Discord**. It was built to solve the common problem of downtime when running local LLMs, using a tiered fallback system to ensure the bot remains responsive even if your local hardware goes offline.
 
