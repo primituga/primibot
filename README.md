@@ -1,4 +1,4 @@
-# 🚀 PrimiBot - Hybrid AI Assistant for Twitch and Discord
+# 🚀 PrimiBot - Hybrid AI Assistant with 3-Tier Resilience
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker)
@@ -9,93 +9,86 @@
 
 **PrimiBot** is a next-generation AI assistant designed to operate simultaneously on **Twitch** and **Discord**. 
 
-Its core innovation is the **Hybrid Fallback Architecture ("The Parachute")**, which prioritizes generating text locally for free (using your own GPU), but automatically triggers Cloud APIs (Groq) if the local hardware is overloaded or taking too long. This ensures your chat *never* goes unanswered.
+Its core innovation is the **3-Tier Fallback Architecture ("The Parachute")**, which guarantees that the bot never goes offline. It seamlessly switches between local processing (GPU), ultra-fast cloud APIs (Groq), and emergency backup power (Raspberry Pi) in milliseconds if any layer fails.
+
+---
+
+## 🧠 The 3-Tier Fallback Architecture
+
+The bot is built with industrial-level resilience. If one tier fails (e.g., API rate limits, hardware crash, network issues), the next one takes over instantly:
+
+1. **Tier 1: Primary Local Server (Main GPU):** Prioritizes free and private local text generation using your own hardware (e.g., RTX 3080) via Ollama and Flowise.
+2. **Tier 2: Groq Cloud (Ultra-Fast):** If the local PC is off or crashes, the bot automatically triggers the **Groq API** using the `groq/compound` agent. This tier includes native web search and a code interpreter. If the agent hits a limit, it falls back to `llama-3.3` paired with a local SearXNG instance.
+3. **Tier 3: Emergency Backup (Raspberry Pi):** If the cloud fails or hits a hard rate limit, the bot resorts to a secondary, low-power Flowise instance running on a Raspberry Pi to ensure the chat never goes unanswered.
 
 ---
 
 ## ✨ Key Features
 
-* 🧠 **Fallback Architecture (Local ➔ Cloud):** Attempts to answer using local LLMs via **Ollama / Flowise** first. If the local PC doesn't respond within 45 seconds, it instantly falls back to the lightning-fast **Groq API** to guarantee message delivery.
-* 🌐 **Real-Time Web Context:** Integrated with **SearXNG** to search the web before answering, ensuring up-to-date and factually accurate responses.
-* 💾 **Persistent Memory:** Uses **Redis** to remember the last 14 messages of each user contextually (with automatic 24h expiration to save space).
-* 📝 **Smart Formatting:** Automatically splits long Discord messages to bypass the 2000-character limit without cutting words, and adapts to Twitch's strict 480-character limit.
-* 🐳 **100% Dockerized:** Optimized to run on lightweight servers (like a Raspberry Pi 5) or robust PCs with NVIDIA GPUs.
+* 👁️ **Vision Support:** Users on Discord can send images, and the bot will dynamically switch to a Vision model (like Llama 3.2 Vision) to analyze and answer questions about them.
+* 🌐 **Dynamic Web Search:** Capable of searching the internet in real-time to answer questions about current events, utilizing either Groq's native tools or a local SearXNG engine.
+* 🛡️ **Smart Memory (Anti-413 Shield):** Features a custom `trim_history_safe` algorithm that weighs the chat history in characters rather than message count, preventing API `413 Payload Too Large` errors when reading long web pages.
+* ⚡ **Official Groq SDK:** Fully integrated with the official Groq Python library for maximum performance and tool calling.
+* 💬 **Multi-Platform:** Manages Twitch chats and Discord channels independently and concurrently using `asyncio.gather` with compartmentalized error handling.
 
 ---
 
-## 🏗️ How the Architecture Works
+## ⚙️ Configuration (.env)
 
-1. **Local Attempt:** A user sends `!ai how do you bake a cake?`. The bot asks your local machine (e.g., an RTX 3080 running Llama 3.1) to generate the answer.
-2. **The Timeout:** The bot waits exactly 45 seconds.
-3. **The Fallback:** If your GPU is busy (e.g., you are playing a heavy game), the bot cancels the local request and asks the Cloud (Groq), delivering the response in under a second.
+Copy the `.env.example` file to `.env` and fill in your credentials. The bot is configured to read these variables automatically:
+
+```env
+# Discord & Twitch Tokens
+DISCORD_TOKEN=your_discord_token
+TWITCH_TOKEN=oauth:your_twitch_token
+TWITCH_CHANNEL=channel1,channel2
+
+# AI Endpoints (Flowise)
+FLOW_URL=http://your-pc-ip:3000/api/v1/prediction/PRIMARY_ID
+FLOW_URL_PI=http://your-pi-ip:3000/api/v1/prediction/BACKUP_ID
+
+# Groq Cloud
+GROQ_API_KEY=gsk_your_key
+
+# Infrastructure
+SEARXNG_URL=http://searxng:8080/search
+REDIS_URL=redis://redis:6379/0
+```
 
 ---
 
-## 📋 Prerequisites
+## 🚀 Getting Started
 
-To run this bot, you will need:
-* [Docker](https://www.docker.com/) and Docker Compose installed.
-* A server or Raspberry Pi to keep the containers online.
-* Bot Tokens from [Discord](https://discord.com/developers/applications) and [Twitch](https://twitchapps.com/tmi/).
-* A free API key from [Groq](https://console.groq.com/keys).
+The project is fully containerized with Docker for easy deployment:
 
----
-
-## 🚀 How to Install and Run
-
-**1. Clone the repository:**
 ```bash
+# 1. Clone the repository
 git clone [https://github.com/primituga/primibot.git](https://github.com/primituga/primibot.git)
 cd primibot
-```
 
-**2. Configure Keys and Tokens:**
-Make a copy of the example environment file and fill in your real keys:
-```bash
+# 2. Set up your environment variables
 cp .env.example .env
-```
-*(Open the `.env` file in your text editor and place your Discord, Twitch, and Groq tokens).*
+nano .env # Fill in your credentials
 
-**3. Start the Engines:**
-Let Docker build the image and start the entire infrastructure in the background:
-```bash
-docker-compose up -d --build
-```
-
-**4. Check the Logs:**
-To ensure the bot woke up and connected to the platforms:
-```bash
-docker logs -f langchain-agent
+# 3. Launch the infrastructure (Redis, SearXNG, Bot)
+docker compose -f ollama.yaml up -d --build
 ```
 
 ---
 
-## 💬 Available Commands
+## 🤖 Commands
 
 | Command | Platform | Description |
 | :--- | :--- | :--- |
-| `!ai <question>` | Twitch & Discord | Asks the Artificial Intelligence a question. |
-| `!ai_reset` | Twitch & Discord | Clears the current conversation memory (useful to change topics). |
-
----
-
-## 📂 Project Structure
-
-```text
-primibot/
-├── docker-compose.yml       # Infrastructure orchestrator (Ollama, Redis, Bot)
-├── .env.example             # Environment variables template
-└── langchain-agent/
-    ├── agent.py             # The bot's brain in Python
-    ├── Dockerfile           # Image build instructions
-    └── requirements.txt     # Python dependencies
-```
+| `!ai <question>` | Twitch & Discord | Asks the Artificial Intelligence a question. (Supports image attachments on Discord). |
+| `!ai_reset` | Twitch & Discord | Clears the current conversation memory (useful to change topics and free up context window). |
+| `!ai_credits` | Discord | Shows information about the bot's creator. |
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are always welcome! If you want to improve the fallback logic, add support for new platforms (like YouTube Live), or optimize the code:
+Contributions are always welcome! If you want to improve the fallback logic, add support for new platforms, or optimize the code:
 1. Fork the Project.
 2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`).
 3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`).
@@ -114,4 +107,4 @@ If PrimiBot made your streams more interactive or saved you some API tokens, con
 
 ## ⚖️ License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License.
