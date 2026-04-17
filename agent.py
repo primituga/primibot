@@ -1,192 +1,311 @@
+import os
+import json
+import base64
+import asyncio
+import logging
+import httpx
 import discord
 from twitchio.ext import commands as twitch_commands
-import httpx
-import os
-import asyncio
-import json
-import logging
 import redis.asyncio as aioredis
-
-# --- NOVA INJEÇÃO: Ler o .env à força ---
+from groq import AsyncGroq
 from dotenv import load_dotenv
-load_dotenv() 
-# ----------------------------------------
 
-# --- Configuração de Logging ---
+# Load environment variables
+load_dotenv()
+
+# --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(name)s | %(message)s')
 logger = logging.getLogger("AIBot")
 
-# --- Variáveis de Ambiente ---
+# --- Environment Variables ---
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 TWITCH_TOKEN = os.getenv("TWITCH_TOKEN")
-# Garante que o token da Twitch tem o prefixo correto
+
+# Ensure Twitch token has the correct prefix
 if TWITCH_TOKEN and not TWITCH_TOKEN.startswith("oauth:"):
     TWITCH_TOKEN = f"oauth:{TWITCH_TOKEN}"
 
+# Flowise & External APIs Configuration
+FLOWISE_USER = os.getenv("FLOWISE_USERNAME", "admin")
+FLOWISE_PASS = os.getenv("FLOWISE_PASSWORD", "admin")
 FLOW_ID = os.getenv("FLOW_ID")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+FLOW_ID_PI = os.getenv("FLOW_ID_PI")
 FLOW_URL = f"http://flowise:3000/api/v1/prediction/{FLOW_ID}"
-SEARXNG_URL = "http://searxng:8080/search"
+FLOW_URL_PI = f"http://flowise:3000/api/v1/prediction/{FLOW_ID_PI}"
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+SEARXNG_URL = os.getenv("SEARXNG_URL", "http://searxng:8080/search")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
-CANAIS_PARA_ENTRAR = os.getenv("TWITCH_CHANNEL").split(",")
+TWITCH_CHANNELS = os.getenv("TWITCH_CHANNEL").split(",") if os.getenv("TWITCH_CHANNEL") else []
 
+# --- Bot Configuration ---
+# Models list for the Cloud Fallback (Groq). The bot tries them in order.
 GROQ_MODELS = [
+    "groq/compound", 
     "llama-3.3-70b-versatile", 
     "llama-3.1-8b-instant", 
     "mixtral-8x7b-32768", 
     "gemma2-9b-it"
 ]
-MAX_HISTORY = 14 
+MAX_HISTORY = 10
+IGNORED_TWITCH_USERS = ["nightbot", "streamlabs", "streamelements", "fossabot", "moobot", "soundalerts"]
 
-# --- Persistência Real com Redis ---
+# Initialize Groq Client
+groq_client = AsyncGroq(api_key=GROQ_API_KEY)
+
+# --- System Prompts ---
+DISCORD_PROMPT = (
+    "You are a helpful, smart, and friendly assistant on Discord. "
+    "CRITICAL RULE: You MUST ALWAYS reply in the EXACT SAME LANGUAGE that the user used in their prompt. "
+    "Format your answers cleanly: use short paragraphs and ALWAYS use bullet points ('-') when listing information or steps."
+)
+
+TWITCH_PROMPT = (
+    "You are a helpful, smart, and fast assistant on Twitch. "
+    "CRITICAL RULE: You MUST ALWAYS reply in the EXACT SAME LANGUAGE that the user used in their prompt. "
+    "CRITICAL RULE 2: Keep your answers EXTREMELY SHORT and concise. Do not use long paragraphs. "
+    "Avoid using markdown like bolding (**) or bullet points unless necessary, as Twitch chat doesn't format them well."
+)
+
+# --- Redis Persistence ---
 redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
 
-async def get_history(session_id):
+async def get_history(session_id: str) -> list:
+    """Retrieve chat history from Redis."""
     data = await redis_client.get(f"history:{session_id}")
     return json.loads(data) if data else []
 
-async def save_history(session_id, history):
-    # Salva no Redis e expira a memória após 24h para economizar espaço
+async def save_history(session_id: str, history: list):
+    """Save chat history to Redis with a 24-hour expiration time."""
     await redis_client.set(f"history:{session_id}", json.dumps(history[-MAX_HISTORY:]), ex=86400)
 
-async def clear_history(session_id):
+async def clear_history(session_id: str):
+    """Clear chat history from Redis."""
     await redis_client.delete(f"history:{session_id}")
+    # Note: If your Flowise endpoint requires an API Key (Bearer) instead of Basic Auth, 
+    # you must implement the Authorization header here to avoid 401 Unauthorized errors.
 
-# --- Funções Auxiliares ---
-async def search_web(query):
+def trim_history_safe(history: list, max_chars: int = 6000) -> list:
+    """
+    Prevents HTTP 413 Payload Too Large errors by trimming older messages 
+    if the total character count exceeds the safe limit.
+    """
+    trimmed = []
+    current_length = 0
+    
+    for msg in reversed(history):
+        msg_len = len(msg.get("content", ""))
+        if current_length + msg_len > max_chars:
+            break
+        trimmed.insert(0, msg)
+        current_length += msg_len
+        
+    return trimmed
+
+# --- Helper Functions ---
+async def search_web(query: str) -> str:
+    """Perform a web search using a local SearXNG instance."""
     try:
         async with httpx.AsyncClient() as client:
             res = await client.get(SEARXNG_URL, params={"q": query, "format": "json"}, timeout=5.0)
             data = res.json()
-            results = [f"- {i.get('title')} ({i.get('url')})" for i in data.get("results", [])[:3]]
+            results = [f"- {i.get('title')} ({i.get('url')}): {i.get('content', 'No summary')}" for i in data.get("results", [])[:3]]
             return "\n".join(results)
     except Exception as e:
-        logger.warning(f"SearXNG falhou: {e}")
+        logger.warning(f"SearXNG search failed: {e}")
         return ""
 
-# --- Funções Auxiliares ---
-
-async def send_discord_chunks(channel, text):
-    """Divide mensagens longas de forma inteligente (sem cortar palavras) e sem atrasos artificiais."""
+async def send_discord_chunks(channel, text: str):
+    """Send long messages to Discord by splitting them safely at line breaks or spaces."""
     if not text: return
-    
     chunk_size = 1900
     while len(text) > 0:
-        # Se o texto já for menor que o limite, envia tudo de uma vez
         if len(text) <= chunk_size:
             await channel.send(text)
             break
-        
-        # Procura a última quebra de linha (\n) dentro do limite seguro
         split_at = text.rfind('\n', 0, chunk_size)
-        
-        # Se não houver quebra de linha, procura o último espaço
-        if split_at == -1:
-            split_at = text.rfind(' ', 0, chunk_size)
-            
-        # Se for uma palavra/link gigante sem espaços (muito raro), corta no limite exato
-        if split_at == -1:
-            split_at = chunk_size
-            
-        # Extrai o pedaço e envia instantaneamente
+        if split_at == -1: split_at = text.rfind(' ', 0, chunk_size)
+        if split_at == -1: split_at = chunk_size
         chunk = text[:split_at]
         await channel.send(chunk)
-        
-        # Prepara o resto do texto para o próximo ciclo, removendo espaços no início
         text = text[split_at:].lstrip()
 
-
-async def send_twitch_chunks(channel, author_name, text):
-    """Divide mensagens longas para a Twitch sem cortar palavras."""
+async def send_twitch_chunks(channel, author_name: str, text: str):
+    """Send long messages to Twitch safely, preventing spam bans by using asyncio.sleep."""
     if not text: return
-    
     prefix = f"@{author_name}: "
     chunk_size = 480 - len(prefix)
-    primeira_mensagem = True
-    
+    first_message = True
     while len(text) > 0:
         if len(text) <= chunk_size:
-            msg = f"{prefix}{text}" if primeira_mensagem else text
+            msg = f"{prefix}{text}" if first_message else text
             await channel.send(msg)
             break
-        
-        # Procura o último espaço para não cortar a palavra a meio
         split_at = text.rfind(' ', 0, chunk_size)
-        if split_at == -1:
-            split_at = chunk_size
-            
+        if split_at == -1: split_at = chunk_size
         chunk = text[:split_at]
-        msg = f"{prefix}{chunk}" if primeira_mensagem else chunk
+        msg = f"{prefix}{chunk}" if first_message else chunk
         await channel.send(msg)
-        
         text = text[split_at:].lstrip()
-        primeira_mensagem = False
-        chunk_size = 480 # Aumenta o espaço porque o prefixo já não é usado
-        
-        # VITAL: Pausa de 1.5s entre mensagens para a Twitch não banir o bot por Spam
-        await asyncio.sleep(1.5)
+        first_message = False
+        chunk_size = 480
+        await asyncio.sleep(1.5)  # Crucial to avoid Twitch chat bans
 
-# --- Lógica de IA (Resiliência Total) ---
-async def ask_ai_logic(question, session_id):
+# --- Core AI Logic (3-Tier Fallback System) ---
+async def ask_ai_logic(question: str, session_id: str, platform: str = "discord", base64_image: str = None) -> str:
+    """
+    Handles the AI logic with a robust 3-tier fallback architecture:
+    1. Primary Flowise Server
+    2. Cloud Groq API (with dynamic SearXNG context)
+    3. Secondary Flowise Server (Low-power backup)
+    """
     history = await get_history(session_id)
-    
-    # 1. TENTATIVA: Flowise (Timeout reduzido para 15s para não travar a Twitch)
+    history = trim_history_safe(history, max_chars=6000)
+    is_vision = base64_image is not None 
+
+    # ==========================================
+    # LEVEL 1: Primary Flowise Server
+    # ==========================================
     try:
         async with httpx.AsyncClient() as client:
             payload = {"question": question, "overrideConfig": {"sessionId": session_id}}
+            if is_vision:
+                payload["uploads"] = [{
+                    "data": f"data:image/jpeg;base64,{base64_image}",
+                    "type": "file",
+                    "name": "vision_input.jpg",
+                    "mime": "image/jpeg"
+                }]
+
             res = await client.post(FLOW_URL, json=payload, timeout=45.0)
-            if res.status_code == 200:
-                ans = res.json().get("text")
+            res.raise_for_status() 
+            ans = res.json().get("text")
+            
+            history_msg = f"[Image sent] {question}" if is_vision else question
+            history.extend([{"role": "user", "content": history_msg}, {"role": "assistant", "content": ans}])
+            await save_history(session_id, history)
+            return ans
+            
+    except Exception as e:
+        logger.warning(f"Level 1 (Primary Server) failed. Reason: {e}")
+
+    # ==========================================
+    # LEVEL 2: Cloud Fallback (Groq API)
+    # ==========================================
+    if is_vision:
+        vision_model = "llama-3.2-11b-vision-preview"
+        sys_prompt = "You are a helpful assistant. Describe the image or answer the user's question about it. Always reply in the EXACT SAME LANGUAGE as the user."
+        messages_payload = [
+            {"role": "system", "content": sys_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": question if question else "What do you see in this image?"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                ]
+            }
+        ]
+        try:
+            res = await groq_client.chat.completions.create(
+                model=vision_model,
+                messages=messages_payload,
+                temperature=0.5
+            )
+            ans = res.choices[0].message.content
+            ans = f"👁️ ({vision_model}) {ans}"
+            
+            history.extend([{"role": "user", "content": f"[Image sent] {question}"}, {"role": "assistant", "content": ans}])
+            await save_history(session_id, history)
+            return ans
+        except Exception as e:
+            logger.warning(f"Groq Vision failed: {e}")
+    else:
+        sys_prompt_base = TWITCH_PROMPT if platform == "twitch" else DISCORD_PROMPT
+        web_context = None
+
+        for model in GROQ_MODELS:
+            try:
+                if "compound" in model:
+                    # Agentic models require minimal context to avoid HTTP 413 Payload Too Large
+                    # Max completion tokens are explicitly set to save context window space.
+                    light_payload = [
+                        {"role": "system", "content": sys_prompt_base},
+                        {"role": "user", "content": question}
+                    ]
+                    
+                    res = await groq_client.chat.completions.create(
+                        model=model,
+                        messages=light_payload,
+                        temperature=0.5,
+                        stream=False,
+                        max_completion_tokens=1024,
+                        compound_custom={
+                            "tools": {"enabled_tools": ["web_search", "code_interpreter", "visit_website"]}
+                        }
+                    )
+                else:
+                    # Standard LLMs use local web search (SearXNG) and full history
+                    current_sys_prompt = sys_prompt_base
+                    
+                    if web_context is None: 
+                        web_context = await search_web(question)
+                    
+                    if web_context:
+                        current_sys_prompt += f"\n\nUpdated Web Context:\n{web_context}"
+                    
+                    messages_payload = [{"role": "system", "content": current_sys_prompt}] + history + [{"role": "user", "content": question}]
+
+                    res = await groq_client.chat.completions.create(
+                        model=model,
+                        messages=messages_payload,
+                        temperature=0.5,
+                        stream=False
+                    )
+                
+                ans = res.choices[0].message.content
+                ans = f"⚡ ({model}) {ans}"
+                
                 history.extend([{"role": "user", "content": question}, {"role": "assistant", "content": ans}])
                 await save_history(session_id, history)
                 return ans
-    except Exception as e:
-        logger.warning(f"Fallback acionado para {session_id}. Motivo: {e}")
+                
+            except Exception as e:
+                logger.warning(f"Groq Model '{model}' failed: {e}")
+                continue 
 
-    # 2. TENTATIVA: Groq Multicamadas + SearXNG
-    web_context = await search_web(question)
-    
-    # O "Cérebro" da IA: Exigimos formatação e Português
-    sys_prompt = (
-        "És um assistente prestativo, inteligente e amigável. "
-        "Responde SEMPRE em Português de Portugal. "
-        "Usa uma formatação limpa: separa os teus pensamentos em parágrafos curtos e "
-        "usa sempre marcadores (bullet points com '-') quando estiveres a listar informações ou a dar passos."
-    )
-    if web_context: 
-        sys_prompt += f"\n\nContexto Web Atualizado para te ajudar:\n{web_context}"
-    
-    messages_payload = [{"role": "system", "content": sys_prompt}] + history + [{"role": "user", "content": question}]
+    logger.warning("Level 2 (Cloud Fallback) completely failed. Falling back to Level 3...")
 
-    for model in GROQ_MODELS:
-        try:
-            async with httpx.AsyncClient() as client:
-                headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
-                res = await client.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers=headers,
-                    json={"model": model, "messages": messages_payload, "temperature": 0.6},
-                    timeout=10.0
-                )
-                if res.status_code == 200:
-                    ans = res.json()["choices"][0]["message"]["content"]
-                    history.extend([{"role": "user", "content": question}, {"role": "assistant", "content": ans}])
-                    await save_history(session_id, history)
-                    return f"⚡ ({model}) {ans}"
-        except Exception:
-            continue
+    # ==========================================
+    # LEVEL 3: Secondary Server (Low-power Backup)
+    # ==========================================
+    if is_vision:
+        return "⚠️ Error: Primary server and Cloud fallback are down. Currently running on emergency backup, which does not support image processing. Please send text only."
+
+    try:
+        async with httpx.AsyncClient() as client:
+            payload = {"question": question, "overrideConfig": {"sessionId": session_id}}
+            res = await client.post(FLOW_URL_PI, json=payload, timeout=30.0)
+            res.raise_for_status() 
             
-    return "⚠️ Nossos satélites perderam conexão com a IA no momento. Tente novamente."
+            ans = res.json().get("text")
+            ans = f"🍓 (Backup Server) {ans}"
+            history.extend([{"role": "user", "content": question}, {"role": "assistant", "content": ans}])
+            await save_history(session_id, history)
+            return ans
+    except Exception as e:
+        logger.error(f"Critical Failure at Level 3: {e}")
+        
+    return "⚠️ Fatal Error: All servers and fallbacks are currently down. Please try again later."
 
-# --- Módulo Discord ---
+# --- Discord Module ---
 intents = discord.Intents.default()
 intents.message_content = True
 discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    logger.info(f"Discord Online: {discord_client.user}")
+    logger.info(f"Discord Bot Online: {discord_client.user}")
 
 @discord_client.event
 async def on_message(message):
@@ -195,79 +314,89 @@ async def on_message(message):
 
     if message.content == "!ai_reset":
         await clear_history(session_id)
-        await message.channel.send("🧹 Memória limpa com sucesso!")
+        await message.channel.send("🧹 Memory cleared successfully!")
         return
 
-    if message.content.startswith("!ai "):
-        q = message.content.replace("!ai ", "").strip()
+    if message.content == "!ai_credits":
+        await message.channel.send("Hello, I am primiBOT, developed by primiSC. \nhttps://github.com/primituga/primibot")
+        return
+
+    if message.content.lower().startswith("!ai ") and not message.attachments:
+        q = message.content[4:].strip()
         if not q: return
         async with message.channel.typing():
-            ans = await ask_ai_logic(q, session_id)
+            ans = await ask_ai_logic(q, session_id, platform="discord")
             await send_discord_chunks(message.channel, ans)
 
-# --- Módulo Twitch ---
+    elif message.attachments:
+        attachment = message.attachments[0]
+        if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp']):
+            async with message.channel.typing():
+                image_bytes = await attachment.read()
+                base64_image = base64.b64encode(image_bytes).decode('utf-8')
+                
+                q = message.content[4:].strip() if message.content.lower().startswith("!ai ") else message.content
+                
+                ans = await ask_ai_logic(q, session_id, platform="discord", base64_image=base64_image)
+                await send_discord_chunks(message.channel, ans)
+
+# --- Twitch Module ---
 class MyTwitchBot(twitch_commands.Bot):
     def __init__(self):
         super().__init__(
             token=TWITCH_TOKEN,
             prefix='!',
-            initial_channels=CANAIS_PARA_ENTRAR
+            initial_channels=TWITCH_CHANNELS
         )
 
     async def event_ready(self):
-        nome = self.nick if hasattr(self, 'nick') else "Bot"
-        logger.info(f"Twitch Online: {nome} nos canais {CANAIS_PARA_ENTRAR}")
+        bot_name = self.nick if hasattr(self, 'nick') else "Bot"
+        logger.info(f"Twitch Bot Online: {bot_name} connected to {TWITCH_CHANNELS}")
 
     async def event_message(self, message):
         if message.echo or message.author is None: return
-        # Isto diz à biblioteca para processar comandos oficiais
+        if message.author.name.lower() in IGNORED_TWITCH_USERS: return
         await self.handle_commands(message)
 
-    # Esconder os erros de "Command Not Found"
     async def event_command_error(self, context, error):
-        if isinstance(error, twitch_commands.CommandNotFound):
-            return  # Se alguém escrever "!ola", o bot ignora em vez de dar erro
-        logger.error(f"Erro Twitch: {error}")
+        # Ignore "Command Not Found" errors to prevent console spam
+        if isinstance(error, twitch_commands.CommandNotFound): return
+        logger.error(f"Twitch Command Error: {error}")
 
-    # Transformamos o !ai num comando oficial!
     @twitch_commands.command(name='ai')
     async def ask_ai(self, ctx):
         q = ctx.message.content.replace("!ai ", "").strip()
         if not q: return
         
         sid = f"twitch_{ctx.channel.name}_{ctx.author.name}"
-        ans = await ask_ai_logic(q, sid)
-        
-        # Usa a nossa nova função inteligente de divisão
+        ans = await ask_ai_logic(q, sid, platform="twitch")
         await send_twitch_chunks(ctx.channel, ctx.author.name, ans)
 
     @twitch_commands.command(name='ai_reset')
     async def reset_ai(self, ctx):
         sid = f"twitch_{ctx.channel.name}_{ctx.author.name}"
         await clear_history(sid)
-        await ctx.send(f"@{ctx.author.name} 🧹 Memória reiniciada!")
+        await ctx.send(f"@{ctx.author.name} 🧹 Memory cleared!")
 
-# --- Runner ---
+# --- Main Runner ---
 async def main():
     tasks = []
     if DISCORD_TOKEN: tasks.append(discord_client.start(DISCORD_TOKEN))
     if TWITCH_TOKEN: tasks.append(MyTwitchBot().start())
     
     if not tasks:
-        logger.error("Nenhum token fornecido! Saindo...")
+        logger.error("No valid tokens provided! Exiting...")
         return
         
-    # A MAGIA: return_exceptions=True cria compartimentos estanques!
-    # Se a Twitch explodir por tokens errados, o Discord continua vivo e vice-versa.
-    resultados = await asyncio.gather(*tasks, return_exceptions=True)
+    # Run both bots concurrently. return_exceptions=True prevents one bot's crash from killing the other.
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    # Verifica se algum deles crashou e avisa no terminal sem matar o programa
-    for res in resultados:
+    for res in results:
         if isinstance(res, Exception):
-            logger.error(f"🚨 Alerta Crítico: Um dos bots falhou ao arrancar -> {res}")
+            logger.error(f"Critical Service Alert: A bot failed to start -> {res}")
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("👋 Bot desligado com sucesso.")
+        logger.info("Bot shut down gracefully.")
