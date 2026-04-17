@@ -1,76 +1,62 @@
-# 🚀 PrimiBot - Hybrid AI Assistant with 3-Tier Resilience
+# PrimiBot: Multi-Platform AI Assistant with Local & Cloud Fallback
 
-![Python](https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker)
-![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?style=for-the-badge&logo=discord)
-![Twitch](https://img.shields.io/badge/Twitch-Bot-9146FF?style=for-the-badge&logo=twitch)
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-[![Buy me a beer](https://img.shields.io/badge/Buy_me_a_beer-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://paypal.me/primiSC)
+![Python](https://img.shields.io/badge/Python-3.11-blue?style=flat-square&logo=python)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker)
+![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?style=flat-square&logo=discord)
+![Twitch](https://img.shields.io/badge/Twitch-Bot-9146FF?style=flat-square&logo=twitch)
+![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
-**PrimiBot** is a next-generation AI assistant designed to operate simultaneously on **Twitch** and **Discord**. 
-
-Its core innovation is the **3-Tier Fallback Architecture ("The Parachute")**, which guarantees that the bot never goes offline. It seamlessly switches between local processing (GPU), ultra-fast cloud APIs (Groq), and emergency backup power (Raspberry Pi) in milliseconds if any layer fails.
+PrimiBot is an AI-powered assistant that runs simultaneously on **Twitch** and **Discord**. It was built to solve the common problem of downtime when running local LLMs, using a tiered fallback system to ensure the bot remains responsive even if your local hardware goes offline.
 
 ---
 
-## 🧠 The 3-Tier Fallback Architecture
+## 🛠 Fallback Logic
 
-The bot is built with industrial-level resilience. If one tier fails (e.g., API rate limits, hardware crash, network issues), the next one takes over instantly:
+The bot handles requests through three prioritized layers:
 
-1. **Tier 1: Primary Local Server (Main GPU):** Prioritizes free and private local text generation using your own hardware (e.g., RTX 3080) via Ollama and Flowise.
-2. **Tier 2: Groq Cloud (Ultra-Fast):** If the local PC is off or crashes, the bot automatically triggers the **Groq API** using the `groq/compound` agent. This tier includes native web search and a code interpreter. If the agent hits a limit, it falls back to `llama-3.3` paired with a local SearXNG instance.
-3. **Tier 3: Emergency Backup (Raspberry Pi):** If the cloud fails or hits a hard rate limit, the bot resorts to a secondary, low-power Flowise instance running on a Raspberry Pi to ensure the chat never goes unanswered.
+1.  **Primary (Local GPU):** Uses **Flowise/Ollama** on your local machine. This is the preferred method to keep costs at zero and data private.
+2.  **Secondary (Cloud):** If the local server is unreachable, it switches to the **Groq API** (`groq/compound`). It uses native web search and code execution to provide accurate, real-time answers.
+3.  **Tertiary (Low-Power Backup):** As a final resort, it can connect to a secondary Flowise instance running on a low-power device (like a **Raspberry Pi**), ensuring basic text functionality is always available.
 
 ---
 
 ## ✨ Key Features
 
-* 👁️ **Vision Support:** Users on Discord can send images, and the bot will dynamically switch to a Vision model (like Llama 3.2 Vision) to analyze and answer questions about them.
-* 🌐 **Dynamic Web Search:** Capable of searching the internet in real-time to answer questions about current events, utilizing either Groq's native tools or a local SearXNG engine.
-* 🛡️ **Smart Memory (Anti-413 Shield):** Features a custom `trim_history_safe` algorithm that weighs the chat history in characters rather than message count, preventing API `413 Payload Too Large` errors when reading long web pages.
-* ⚡ **Official Groq SDK:** Fully integrated with the official Groq Python library for maximum performance and tool calling.
-* 💬 **Multi-Platform:** Manages Twitch chats and Discord channels independently and concurrently using `asyncio.gather` with compartmentalized error handling.
+* **Multi-Platform Support:** Independent handling for Twitch chat and Discord channels using `asyncio`.
+* **Vision Capabilities:** Supports image analysis on Discord via Llama 3.2 Vision.
+* **Real-Time Web Context:** Integrates with **SearXNG** or Groq's native search to answer questions about current events.
+* **Automatic Memory Management:** A custom `trim_history_safe` function monitors the character count of the chat history. This prevents the "Payload Too Large" (413) errors common when agents inject too much web data into the context window.
+* **Official SDK Integration:** Built using the official Groq Python library for better stability.
 
 ---
 
-## ⚙️ Configuration (.env)
+## ⚙️ Setup
 
-Copy the `.env.example` file to `.env` and fill in your credentials. The bot is configured to read these variables automatically:
+### Prerequisites
+* Docker and Docker Compose.
+* A Discord Bot Token and Twitch OAuth credentials.
+* A Groq API Key (Optional, for cloud fallback).
+
+### Configuration
+1.  Copy `.env.example` to `.env`.
+2.  Fill in your platform tokens and server URLs:
 
 ```env
-# Discord & Twitch Tokens
-DISCORD_TOKEN=your_discord_token
-TWITCH_TOKEN=oauth:your_twitch_token
-TWITCH_CHANNEL=channel1,channel2
+DISCORD_TOKEN=your_token
+TWITCH_TOKEN=oauth:your_token
+TWITCH_CHANNEL=your_channel
 
-# AI Endpoints (Flowise)
-FLOW_URL=http://your-pc-ip:3000/api/v1/prediction/PRIMARY_ID
-FLOW_URL_PI=http://your-pi-ip:3000/api/v1/prediction/BACKUP_ID
+# Flowise Endpoints
+FLOW_URL=http://local-ip:3000/api/v1/prediction/ID_1
+FLOW_URL_PI=http://pi-ip:3000/api/v1/prediction/ID_2
 
-# Groq Cloud
-GROQ_API_KEY=gsk_your_key
-
-# Infrastructure
-SEARXNG_URL=http://searxng:8080/search
-REDIS_URL=redis://redis:6379/0
+GROQ_API_KEY=your_key
 ```
 
----
-
-## 🚀 Getting Started
-
-The project is fully containerized with Docker for easy deployment:
+### Installation
+Run the entire stack (Redis, SearXNG, and the Bot) using Docker Compose:
 
 ```bash
-# 1. Clone the repository
-git clone [https://github.com/primituga/primibot.git](https://github.com/primituga/primibot.git)
-cd primibot
-
-# 2. Set up your environment variables
-cp .env.example .env
-nano .env # Fill in your credentials
-
-# 3. Launch the infrastructure (Redis, SearXNG, Bot)
 docker compose -f ollama.yaml up -d --build
 ```
 
@@ -78,33 +64,26 @@ docker compose -f ollama.yaml up -d --build
 
 ## 🤖 Commands
 
-| Command | Platform | Description |
-| :--- | :--- | :--- |
-| `!ai <question>` | Twitch & Discord | Asks the Artificial Intelligence a question. (Supports image attachments on Discord). |
-| `!ai_reset` | Twitch & Discord | Clears the current conversation memory (useful to change topics and free up context window). |
-| `!ai_credits` | Discord | Shows information about the bot's creator. |
+| Command | Description |
+| :--- | :--- |
+| `!ai <query>` | Ask the AI a question (Supports images on Discord). |
+| `!ai_reset` | Clears the conversation history for the current session. |
+| `!ai_credits` | Links to the project repository. |
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are always welcome! If you want to improve the fallback logic, add support for new platforms, or optimize the code:
-1. Fork the Project.
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`).
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`).
-4. Push to the Branch (`git push origin feature/AmazingFeature`).
-5. Open a Pull Request.
+This is an open-source project. If you find a bug or have a suggestion to improve the fallback efficiency, feel free to open an issue or a pull request.
 
 ---
 
-## 🍻 Support the Project
+## 🍻 Support
 
-If PrimiBot made your streams more interactive or saved you some API tokens, consider buying me a beer! It helps keep the Raspberry Pi running and fuels the late-night coding sessions.
+If you find this project useful, you can support its development:
 
-[![Donate with PayPal](https://img.shields.io/badge/Donate-PayPal-blue.svg?style=for-the-badge&logo=paypal)](https://paypal.me/primiSC)
+[![Donate with PayPal](https://img.shields.io/badge/Donate-PayPal-blue.svg?style=flat-square&logo=paypal)](https://paypal.me/primiSC)
 
 ---
 
-## ⚖️ License
-
-This project is licensed under the MIT License.
+**License:** MIT
