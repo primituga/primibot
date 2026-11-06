@@ -1,7 +1,22 @@
-# Ignorar variáveis de ambiente reais
+# Environment / secrets
 .env
+.env.*
+!.env.example
 
-# Ignorar ficheiros temporários do Python e do Mac/Windows
+# Runtime data
+data/
+*.log
+
+# Python
 __pycache__/
 *.pyc
+.venv/
+venv/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
