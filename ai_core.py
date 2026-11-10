@@ -107,8 +107,8 @@ async def get_live_context(unit: str, guild_id=None) -> str:
             if not game and not title:
                 continue
             # Na Twitch o contexto e o do proprio canal, entao nomeia-se o canal
-            # ("O canal primisc"). No Discord sao canais de terceiros, por isso
-            # identifica-se o streamer ("O streamer atomace_ttv") para o modelo
+            # ("O canal principal"). No Discord sao canais de terceiros, por isso
+            # identifica-se o streamer ("O streamer exemplo") para o modelo
             # nao os confundir com a sala onde esta a falar.
             label = login if unit.startswith("twitch:") else f"o streamer {login}"
             parts.append(

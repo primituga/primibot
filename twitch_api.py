@@ -17,6 +17,10 @@ import guild_config
 logger = logging.getLogger("AIBot")
 
 
+class TwitchAuthError(Exception):
+    """As credenciais da app foram rejeitadas no endpoint /oauth2/token."""
+
+
 async def twitch_app_token() -> str:
     now = time.time()
     if state._app_token_cache["token"] and state._app_token_cache["exp"] > now + 60:
@@ -26,6 +30,12 @@ async def twitch_app_token() -> str:
         data={"client_id": TWITCH_CLIENT_ID, "client_secret": TWITCH_CLIENT_SECRET, "grant_type": "client_credentials"},
         timeout=15.0
     )
+    if res.status_code in (400, 401, 403):
+        # 400 = invalid client: o par id/secret nao existe ou o secret foi regenerado.
+        raise TwitchAuthError(
+            f"credenciais da app rejeitadas no /oauth2/token ({res.status_code}); "
+            "confirma TWITCH_APP_CLIENT_ID e TWITCH_APP_CLIENT_SECRET"
+        )
     res.raise_for_status()
     j = res.json()
     state._app_token_cache["token"] = j["access_token"]
@@ -55,18 +65,28 @@ async def twitch_helix(method: str = "GET", path: str = "", params=None, data=No
     """
     try:
         return await _twitch_helix(method, path, params, data, use_user_token)
+    except TwitchAuthError as e:
+        if use_user_token:
+            raise
+        logger.warning(f"{e}; a tentar com o token do streamer")
+        return await _twitch_helix(method, path, params, data, True)
     except httpx.HTTPStatusError as e:
         if not use_user_token and e.response.status_code in (401, 403):
-            logger.warning(f"Twitch app token falhou ({e.response.status_code}) em '{path}'; retry com token de utilizador")
+            logger.warning(f"Helix recusou o app token ({e.response.status_code}) em '{path}'; a tentar com o token do streamer")
             return await _twitch_helix(method, path, params, data, True)
         raise
 
 
 async def get_broadcaster_id() -> str:
     if state._broadcaster_id_cache: return state._broadcaster_id_cache
-    if TWITCH_BROADCASTER_ID:
-        state._broadcaster_id_cache = TWITCH_BROADCASTER_ID
-        return state._broadcaster_id_cache
+    bid = (TWITCH_BROADCASTER_ID or "").strip()
+    if bid:
+        if bid.isdigit():
+            state._broadcaster_id_cache = bid
+            return state._broadcaster_id_cache
+        # Um client id (ou qualquer coisa nao numerica) aqui nao e um user id e
+        # faria todas as chamadas Helix falhar com 400.
+        logger.warning("TWITCH_STREAMER_ID nao e um ID numerico; a ignorar e a resolver pelo primeiro canal")
     if not TWITCH_CHANNELS: return ""
     try:
         data = await twitch_helix(path="users", params={"login": TWITCH_CHANNELS[0]})
@@ -87,13 +107,28 @@ async def poll_twitch_events():
     if not bid:
         return
 
-    # 1) Follows / unfollows (endpoint antigo "users/follows" foi removido -> usar "channels/followers")
+    # 1) Follows / unfollows (channels/followers).
+    # ATENCAO: exige user token. Com app token a Twitch devolve 200 com "total"
+    # preenchido mas "data" vazio -- foi isso que manteve twitch:followers em {}.
     try:
-        data = await twitch_helix(path="channels/followers", params={"broadcaster_id": bid, "first": 100})
-        current = {f["user_login"]: f["user_id"] for f in data.get("data", [])}
+        current, total, cursor = {}, None, None
+        for _ in range(20):  # ate 2000 followers; a contagem real vem de "total"
+            params = {"broadcaster_id": bid, "first": 100}
+            if cursor:
+                params["after"] = cursor
+            data = await twitch_helix(path="channels/followers", params=params, use_user_token=True)
+            if total is None:
+                total = data.get("total", 0)
+            current.update({f["user_login"]: f["user_id"] for f in data.get("data", [])})
+            cursor = (data.get("pagination") or {}).get("cursor")
+            if not cursor:
+                break
+
         prev_raw = await state.redis_client.get("twitch:followers")
         prev = json.loads(prev_raw) if prev_raw else None
-        if prev is not None:
+        # {} e o residuo de quando o app token devolvia data vazio: trata-se como
+        # "sem baseline", senao o primeiro poll anunciava todos os followers.
+        if prev:
             for n in current:
                 if n not in prev:
                     await log_event("⭐ Novo follower", n, color=0x00ff00, source="twitch")
@@ -102,6 +137,8 @@ async def poll_twitch_events():
                 if n not in current:
                     await log_event("💔 Unfollow", n, color=0xff0000, source="twitch")
         await state.redis_client.set("twitch:followers", json.dumps(current))
+        if total is not None:
+            await state.redis_client.set("twitch:followers_total", str(total))
     except Exception as e:
         logger.warning(f"Follow poll failed: {e}")
 

@@ -10,44 +10,70 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(
 logger = logging.getLogger("AIBot")
 
 # --- Environment Variables ---
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-TWITCH_TOKEN = os.getenv("TWITCH_TOKEN")
+def _env(new: str, *old: str, default=None):
+    """Le o nome novo e cai para os antigos (migração sem downtime).
 
-# Ensure Twitch token has the correct prefix
-if TWITCH_TOKEN and not TWITCH_TOKEN.startswith("oauth:"):
-    TWITCH_TOKEN = f"oauth:{TWITCH_TOKEN}"
+    O primeiro nome que existir ganha, mesmo que o valor esteja vazio; só se
+    nenhum existir é que se usa `default`.
+    """
+    for name in (new, *old):
+        value = os.getenv(name)
+        if value is not None:
+            return value
+    return default
+
+
+# --- Discord ---
+# Token do proprio bot (nao e do streamer).
+DISCORD_TOKEN = _env("DISCORD_BOT_TOKEN", "DISCORD_TOKEN")
+
+# Servidor e canais do Discord onde o bot opera / publica.
+GUILD_ID = int(_env("DISCORD_GUILD_ID", "GUILD_ID", default="0") or 0)
+LOG_CHANNEL_ID = int(_env("DISCORD_LOG_CHANNEL_ID", "LOG_CHANNEL_ID", default="0") or 0)                       # canal de logs do Discord
+LOG_CHANNEL_ID_TWITCH = int(_env("DISCORD_LOG_CHANNEL_ID_TWITCH", "LOG_CHANNEL_ID_TWITCH", default="0") or 0)  # canal de logs da Twitch
 
 # Flowise & External APIs Configuration
-FLOWISE_USER = os.getenv("FLOWISE_USERNAME", "admin")
-FLOWISE_PASS = os.getenv("FLOWISE_PASSWORD", "admin")
-FLOW_ID = os.getenv("FLOW_ID")
-FLOW_ID_PI = os.getenv("FLOW_ID_PI")
+FLOWISE_USER = _env("FLOWISE_USERNAME", default="admin")
+FLOWISE_PASS = _env("FLOWISE_PASSWORD", default="admin")
+FLOW_ID = _env("FLOW_ID")
+FLOW_ID_PI = _env("FLOW_ID_PI")
 FLOW_URL = f"http://flowise:3000/api/v1/prediction/{FLOW_ID}"
 FLOW_URL_PI = f"http://flowise:3000/api/v1/prediction/{FLOW_ID_PI}"
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENCODE_ZEN_API_KEY = os.getenv("OPENCODE_ZEN_API_KEY")
-SEARXNG_URL = os.getenv("SEARXNG_URL", "http://searxng:8080/search")
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+GROQ_API_KEY = _env("GROQ_API_KEY")
+OPENROUTER_API_KEY = _env("OPENROUTER_API_KEY")
+OPENCODE_ZEN_API_KEY = _env("OPENCODE_ZEN_API_KEY")
+SEARXNG_URL = _env("SEARXNG_URL", default="http://searxng:8080/search")
+REDIS_URL = _env("REDIS_URL", default="redis://redis:6379/0")
+WEBHOOK_URL = _env("WEBHOOK_URL")
 
-# Discord logging & slash commands
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0") or 0)                 # canal de logs do Discord
-LOG_CHANNEL_ID_TWITCH = int(os.getenv("LOG_CHANNEL_ID_TWITCH", "0") or 0)   # canal de logs da Twitch
-GUILD_ID = int(os.getenv("GUILD_ID", "0") or 0)
+# --- Twitch: APP (developer app, partilhada pelo bot e pelo streamer) ---
+# Geram os app tokens. Se der 403 no /oauth2/token, o secret foi regenerado
+# no console da Twitch e o .env ficou com o antigo.
+TWITCH_CLIENT_ID = _env("TWITCH_APP_CLIENT_ID", "TWITCH_CLIENT_ID")
+TWITCH_CLIENT_SECRET = _env("TWITCH_APP_CLIENT_SECRET", "TWITCH_CLIENT_SECRET")
 
-# Twitch API (Helix) — para follows, redemptions e estado de stream
-TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
-TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
-TWITCH_BROADCASTER_ID = os.getenv("TWITCH_BROADCASTER_ID")
-# Token de utilizador do broadcaster (MESMA app/client_id) para endpoints com scope
-# (channel:read:redemptions). O token de chat pode ser de outra app e não serve para Helix.
-TWITCH_USER_TOKEN = os.getenv("TWITCH_USER_TOKEN")
+# --- Twitch: BOT (a conta que entra no chat e responde) ---
+TWITCH_TOKEN = _env("TWITCH_BOT_CHAT_TOKEN", "TWITCH_TOKEN")
+if TWITCH_TOKEN and not TWITCH_TOKEN.startswith("oauth:"):
+    TWITCH_TOKEN = f"oauth:{TWITCH_TOKEN}"
+
+# Canais em que o bot entra. O PRIMEIRO e o canal principal do streamer.
+TWITCH_CHANNELS = [
+    c.strip()
+    for c in (_env("TWITCH_BOT_CHANNELS", "TWITCH_CHANNEL", default="") or "").split(",")
+    if c.strip()
+]
+
+# --- Twitch: STREAMER (broadcaster) ---
+# ID numerico do canal principal. Vazio = resolve o primeiro de TWITCH_BOT_CHANNELS.
+TWITCH_BROADCASTER_ID = _env("TWITCH_STREAMER_ID", "TWITCH_BROADCASTER_ID")
+# User token DO STREAMER (mesma app), com os scopes de Helix:
+#   moderator:read:followers, channel:read:redemptions, channel:manage:redemptions.
+# NAO e o token de chat do bot, e nao serve para o chat.
+TWITCH_USER_TOKEN = _env("TWITCH_STREAMER_USER_TOKEN", "TWITCH_USER_TOKEN")
 if TWITCH_USER_TOKEN and TWITCH_USER_TOKEN.startswith("oauth:"):
     TWITCH_USER_TOKEN = TWITCH_USER_TOKEN[len("oauth:"):]
-
-TWITCH_CHANNELS = os.getenv("TWITCH_CHANNEL").split(",") if os.getenv("TWITCH_CHANNEL") else []
 
 # --- Bot Configuration ---
 # Models list for the Cloud Fallback (Groq). The bot tries them in order.
@@ -76,19 +102,20 @@ SUSPECT_ACCOUNT_AGE_DAYS = int(os.getenv("SUSPECT_ACCOUNT_AGE_DAYS", "7"))
 SUSPECT_LINK_SCAN = os.getenv("SUSPECT_LINK_SCAN", "true").lower() == "true"      # URLhaus nos links publicados
 SUSPECT_AUTO_DELETE = os.getenv("SUSPECT_AUTO_DELETE", "false").lower() == "true" # Discord: apagar msg com link mau
 
-# --- Proteção anti-ban Twitch (humanização) ---
-TWITCH_HUMANIZED = os.getenv("TWITCH_HUMANIZED", "true").lower() == "true"          # liga/desliga a humanização
-TWITCH_MIN_TYPING = float(os.getenv("TWITCH_MIN_TYPING", "0.8"))   # delay extra mínimo antes de responder
-TWITCH_MAX_TYPING = float(os.getenv("TWITCH_MAX_TYPING", "2.5"))   # delay extra máximo antes de responder
-TWITCH_MIN_MSG_GAP = float(os.getenv("TWITCH_MIN_MSG_GAP", "1.2")) # intervalo mínimo entre mensagens do bot no mesmo canal
-TWITCH_MAX_RESPONSES = int(os.getenv("TWITCH_MAX_RESPONSES", "5")) # máx de respostas em 60s por canal (evita flood)
-HEARTBEAT_FILE = os.getenv("HEARTBEAT_FILE", "/tmp/agent_heartbeat")
-AI_TRIGGER_REWARDS = [x.strip().lower() for x in os.getenv("AI_TRIGGER_REWARDS", "ask ai,pergunta ao bot,ai").split(",")]
+# --- Proteção anti-ban Twitch (humanização, comportamento do BOT) ---
+TWITCH_HUMANIZED = _env("TWITCH_BOT_HUMANIZED", "TWITCH_HUMANIZED", default="true").lower() == "true"          # liga/desliga a humanização
+TWITCH_MIN_TYPING = float(_env("TWITCH_BOT_MIN_TYPING", "TWITCH_MIN_TYPING", default="0.8"))   # delay extra mínimo antes de responder
+TWITCH_MAX_TYPING = float(_env("TWITCH_BOT_MAX_TYPING", "TWITCH_MAX_TYPING", default="2.5"))   # delay extra máximo antes de responder
+TWITCH_MIN_MSG_GAP = float(_env("TWITCH_BOT_MIN_MSG_GAP", "TWITCH_MIN_MSG_GAP", default="1.2")) # intervalo mínimo entre mensagens do bot no mesmo canal
+TWITCH_MAX_RESPONSES = int(_env("TWITCH_BOT_MAX_RESPONSES", "TWITCH_MAX_RESPONSES", default="5")) # máx de respostas em 60s por canal (evita flood)
+HEARTBEAT_FILE = _env("HEARTBEAT_FILE", default="/tmp/agent_heartbeat")
+# Nomes dos channel points DO STREAMER que disparam resposta de IA no chat.
+AI_TRIGGER_REWARDS = [x.strip().lower() for x in (_env("TWITCH_STREAMER_AI_REWARDS", "AI_TRIGGER_REWARDS", default="ask ai,pergunta ao bot,ai") or "").split(",") if x.strip()]
 
 # Welcome + auto-role (Discord)
-WELCOME_CHANNEL_ID = int(os.getenv("WELCOME_CHANNEL_ID", "0") or 0)
-WELCOME_MESSAGE = os.getenv("WELCOME_MESSAGE", "👋 Bem-vindo(a) {user} ao servidor!")
-AUTO_ROLE_ID = int(os.getenv("AUTO_ROLE_ID", "0") or 0)
+WELCOME_CHANNEL_ID = int(_env("DISCORD_WELCOME_CHANNEL_ID", "WELCOME_CHANNEL_ID", default="0") or 0)
+WELCOME_MESSAGE = _env("DISCORD_WELCOME_MESSAGE", "WELCOME_MESSAGE", default="👋 Bem-vindo(a) {user} ao servidor!")
+AUTO_ROLE_ID = int(_env("DISCORD_AUTO_ROLE_ID", "AUTO_ROLE_ID", default="0") or 0)
 
 # Guard de output (palavras que o bot nunca deve dizer)
 DENYLIST_WORDS = [w.strip().lower() for w in os.getenv("DENYLIST_WORDS", "fdp,pqp,puta,caralho").split(",") if w.strip()]

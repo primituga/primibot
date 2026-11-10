@@ -13,7 +13,7 @@ está explicitamente listado. Não corre no arranque — é manual e idempotente
 
 ## Formatos antigos (verificados em bak/storage.py e nos call sites de bak/)
 
-    history:{sid}          discord_111 | twitch_primisc_bob
+    history:{sid}          discord_111 | twitch_canal_bob
     summary:{sid}          idem
     persona:{platform}     discord | discord:{gid} | twitch:{canal}
     memory:{user_key}      discord:{gid}:{name} | twitch:{canal}:{name}

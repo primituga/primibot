@@ -80,8 +80,11 @@ async def digest_loop():
         await asyncio.sleep((target - now).total_seconds())
         stats = await get_stats(scope.GLOBAL)
         try:
-            followers = await state.redis_client.get("twitch:followers")
-            fc = len(json.loads(followers)) if followers else 0
+            total = await state.redis_client.get("twitch:followers_total")
+            if total is None:
+                followers = await state.redis_client.get("twitch:followers")
+                total = len(json.loads(followers)) if followers else 0
+            fc = int(total)
         except Exception:
             fc = 0
         top = ", ".join(f"{u} ({n})" for u, n in stats["global"]["models"][:3]) or "—"

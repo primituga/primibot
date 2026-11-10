@@ -152,7 +152,7 @@ async def on_message(message):
         return
 
     if message.content == "!ai_credits":
-        await message.channel.send("Hello, I am primiBOT, developed by primiSC. \nhttps://github.com/primituga/primibot")
+        await message.channel.send("Hello, I am primiBOT, an AI chat bot for Discord and Twitch.")
         return
 
     if message.content in ("!help", "!ai_help"):

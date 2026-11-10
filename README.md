@@ -106,13 +106,16 @@ A minimal, sanitised compose file lives in [`compose.example.yml`](compose.examp
 
 All configuration is environment-based (`config.py`). See `.env.example` for the full list:
 
-- `DISCORD_TOKEN`, `TWITCH_TOKEN`, `TWITCH_CLIENT_ID` / `SECRET` — platform credentials
+- `DISCORD_BOT_TOKEN`, `TWITCH_BOT_CHAT_TOKEN`, `TWITCH_APP_CLIENT_ID` / `TWITCH_APP_CLIENT_SECRET` — platform credentials (os nomes antigos `DISCORD_TOKEN`, `TWITCH_TOKEN`, `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` continuam aceites)
 - `GROQ_API_KEY`, `OPENROUTER_API_KEY` — optional cloud fallbacks
 - `FLOW_ID` / `FLOW_ID_PI` — Flowise chatflow identifiers
 - `SEARXNG_URL`, `REDIS_URL` — internal service URLs
 - `WEBHOOK_URL` — crash and digest notifications
 
 Never commit `.env`. It is git-ignored by default.
+
+For the Twitch app and token setup, plus the diagnostic commands and the
+common errors, see [`tutorial.txt`](tutorial.txt).
 
 ## Design decisions
 
@@ -168,4 +171,4 @@ assistants accelerated implementation and documentation.
 
 ---
 
-Author: Sérgio Carmo · [GitHub](https://github.com/primituga) · [LinkedIn](https://www.linkedin.com/in/s%C3%A9rgio-carmo-9b640ba0/)
+Built as a portfolio project.

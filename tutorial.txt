@@ -1,0 +1,413 @@
+primiBOT — TWITCH: APP, TOKENS AND DIAGNOSTICS
+==============================================
+
+Guide to configuring the Twitch app and tokens. Never put secrets in a file
+that can be copied or committed: the .env and its backups stay out of git.
+
+
+1. WHO IS WHO
+-------------
+
+Two accounts, two tokens, one app. The app is not an account.
+
+  <streamer>  -> TWITCH_STREAMER_USER_TOKEN
+                 Helix API: followers/unfollows, channel points, live status.
+
+  <bot>       -> TWITCH_BOT_CHAT_TOKEN
+                 Chat only (IRC). Does not use Helix.
+
+  app         -> TWITCH_APP_CLIENT_ID / TWITCH_APP_CLIENT_SECRET
+                 The application registered at dev.twitch.tv/console/apps.
+                 Not a login. It validates the streamer token and issues app
+                 tokens.
+
+Example values (yours will differ):
+
+  App:            my-app
+  Client ID:      YOUR_CLIENT_ID
+  Redirect URI:   http://localhost:3000
+  Streamer:       <streamer account>
+  Bot:            <bot account>
+
+Golden rule:
+
+  - The STREAMER token must be issued by THIS app (same client_id), because
+    every Helix call sends the Client-ID header.
+  - The BOT token may come from another app: it is only used for IRC chat,
+    which does not send Client-ID.
+
+Typical symptom of a token from another app used for the streamer:
+  401 Client-Id mismatch
+
+
+2. ENVIRONMENT VARIABLES
+------------------------
+
+New name                       Old name (accepted)         Owner
+-----------------------------  --------------------------  ----------------
+DISCORD_BOT_TOKEN              DISCORD_TOKEN               bot
+DISCORD_GUILD_ID               GUILD_ID                    server
+DISCORD_LOG_CHANNEL_ID         LOG_CHANNEL_ID              server
+DISCORD_LOG_CHANNEL_ID_TWITCH  LOG_CHANNEL_ID_TWITCH       server
+DISCORD_WELCOME_CHANNEL_ID     WELCOME_CHANNEL_ID          server
+DISCORD_WELCOME_MESSAGE        WELCOME_MESSAGE             server
+DISCORD_AUTO_ROLE_ID           AUTO_ROLE_ID                server
+TWITCH_APP_CLIENT_ID           TWITCH_CLIENT_ID            app
+TWITCH_APP_CLIENT_SECRET       TWITCH_CLIENT_SECRET        app
+TWITCH_BOT_CHAT_TOKEN          TWITCH_TOKEN                bot
+TWITCH_BOT_CHANNELS            TWITCH_CHANNEL              bot (first = streamer)
+TWITCH_BOT_HUMANIZED           TWITCH_HUMANIZED            bot (anti-ban)
+TWITCH_BOT_MIN_TYPING          TWITCH_MIN_TYPING           bot (anti-ban)
+TWITCH_BOT_MAX_TYPING          TWITCH_MAX_TYPING           bot (anti-ban)
+TWITCH_BOT_MIN_MSG_GAP         TWITCH_MIN_MSG_GAP          bot (anti-ban)
+TWITCH_BOT_MAX_RESPONSES       TWITCH_MAX_RESPONSES        bot (anti-ban)
+TWITCH_STREAMER_ID             TWITCH_BROADCASTER_ID       streamer (optional)
+TWITCH_STREAMER_USER_TOKEN     TWITCH_USER_TOKEN           streamer
+TWITCH_STREAMER_AI_REWARDS     AI_TRIGGER_REWARDS          streamer
+
+config.py uses _env(): it reads the new name and, if missing, the old one.
+A half-migrated .env keeps working.
+
+TWITCH_STREAMER_ID: leave it empty and the bot resolves it from the first
+entry in TWITCH_BOT_CHANNELS. If you set it, it must be NUMERIC. Putting a
+client ID there makes every Helix call fail.
+
+
+3. APP PREREQUISITES
+--------------------
+
+1. https://dev.twitch.tv/console/apps
+2. Create/pick the app (e.g. my-app).
+3. "OAuth Redirect URL": http://localhost:3000
+   It must match the links below exactly.
+4. Client type: Confidential (it has a secret).
+5. Copy the "Client ID".
+6. Under "Client Secret", click "New Secret" and copy it. It is shown once.
+
+The secret does not expire, but you can rotate it whenever you want. Rotating
+the secret does NOT invalidate user tokens already issued; it only affects how
+app tokens are obtained.
+
+
+4. STEP 1 — BOT TOKEN (<bot>)
+-----------------------------
+
+Log in as the bot account. Use a private window so there is no doubt about
+which account is active.
+
+Open:
+
+https://id.twitch.tv/oauth2/authorize?response_type=token&client_id=YOUR_CLIENT_ID&redirect_uri=http://localhost:3000&scope=chat%3Aread+chat%3Aedit+channel%3Amoderate
+
+Scopes:
+
+  chat:read         read chat
+  chat:edit         send messages
+  channel:moderate  moderation (timeout for !rps)
+
+If !rps says it cannot time out, twitchio may also need
+moderator:manage:banned_users. In that case regenerate the token with that
+scope and make sure the bot is a moderator in the streamer's channel.
+
+How to read the result:
+
+  The browser goes to:
+  http://localhost:3000/#access_token=XXXX&scope=...
+
+  The page shows a connection error. That is expected: nothing is listening
+  on that port. Copy ONLY the XXXX, without "oauth:" and without anything
+  after the "&".
+
+Fill in:
+
+  TWITCH_BOT_CHAT_TOKEN=XXXX
+
+
+5. STEP 2 — STREAMER TOKEN (<streamer>)
+---------------------------------------
+
+Log in as the streamer account (private window).
+
+Option A — implicit flow (recommended; lasts ~58 days)
+
+https://id.twitch.tv/oauth2/authorize?response_type=token&client_id=YOUR_CLIENT_ID&redirect_uri=http://localhost:3000&scope=moderator%3Aread%3Afollowers+channel%3Aread%3Aredemptions+channel%3Amanage%3Aredemptions
+
+Copy the access_token as above and fill in:
+
+  TWITCH_STREAMER_USER_TOKEN=XXXX
+
+Option B — authorization code (confidential app; short token + refresh)
+
+1. Open:
+
+https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=YOUR_CLIENT_ID&redirect_uri=http://localhost:3000&scope=moderator%3Aread%3Afollowers+channel%3Aread%3Aredemptions+channel%3Amanage%3Aredemptions
+
+2. Copy the "code" from the URL you are redirected to. It lasts a few minutes
+   and can only be used once.
+
+3. Exchange it for a token (on the server; replace the placeholders):
+
+curl -s -X POST https://id.twitch.tv/oauth2/token \
+  -d client_id=YOUR_CLIENT_ID \
+  -d client_secret='YOUR_SECRET' \
+  -d code='THE_CODE_FROM_THE_URL' \
+  -d grant_type=authorization_code \
+  -d redirect_uri=http://localhost:3000
+
+The response contains access_token, refresh_token and scope.
+
+NOTE: the authorization-code access token usually has expires_in around
+4 hours. The bot does NOT refresh it. If you use this option, you must refresh
+it with:
+
+curl -s -X POST https://id.twitch.tv/oauth2/token \
+  -d client_id=YOUR_CLIENT_ID \
+  -d client_secret='YOUR_SECRET' \
+  -d grant_type=refresh_token \
+  -d refresh_token='YOUR_REFRESH_TOKEN'
+
+For normal operation, prefer Option A.
+
+Streamer scopes:
+
+  moderator:read:followers   read followers/unfollows
+  channel:read:redemptions   read channel points
+  channel:manage:redemptions mark them as fulfilled
+
+
+6. STEP 3 — FILL IN THE .ENV
+----------------------------
+
+On the server, the file is the one in the project directory:
+
+  /path/to/your/project/.env
+
+The container sees it at /app/.env. config.py reads it at startup; a running
+bot only picks up changes after a restart. A new "docker exec" already reads
+the current file.
+
+Minimum for Twitch:
+
+  TWITCH_APP_CLIENT_ID=YOUR_CLIENT_ID
+  TWITCH_APP_CLIENT_SECRET=<secret from the console>
+  TWITCH_BOT_CHAT_TOKEN=<bot token>
+  TWITCH_BOT_CHANNELS=channel1,channel2,channel3
+  TWITCH_STREAMER_ID=
+  TWITCH_STREAMER_USER_TOKEN=<streamer token>
+  TWITCH_STREAMER_AI_REWARDS=ask ai,pergunta ao bot,ai
+
+Do not forget:
+
+  DISCORD_LOG_CHANNEL_ID_TWITCH=<channel id>
+
+Without it, follows/unfollows/lives are detected but log_event returns
+without sending anything. The Twitch log channel is separate from the general
+one.
+
+
+7. STEP 4 — VALIDATE (WITHOUT PRINTING SECRETS)
+-----------------------------------------------
+
+7.1 App credentials (must return 200)
+
+docker exec -i langchain-agent python - <<'PY'
+import asyncio, state, config as c
+async def main():
+    r = await state.http_client.post(
+        "https://id.twitch.tv/oauth2/token",
+        data={"client_id": c.TWITCH_CLIENT_ID,
+              "client_secret": c.TWITCH_CLIENT_SECRET,
+              "grant_type": "client_credentials"},
+    )
+    print("status:", r.status_code)
+    if r.status_code != 200:
+        print("error:", r.text[:300])
+    await state.http_client.aclose()
+asyncio.run(main())
+PY
+
+Reading the result:
+
+  200                       -> app is fine
+  400 invalid client        -> wrong client id
+  400 invalid client secret -> wrong/regenerated secret
+  403                       -> app disabled or invalid credentials
+
+
+7.2 Both tokens (who they are and which scopes they have)
+
+docker exec -i langchain-agent python - <<'PY'
+import asyncio, state, config as c
+async def check(name, tok):
+    if not tok:
+        print(name, "-> empty"); return
+    raw = tok[6:] if tok.startswith("oauth:") else tok
+    r = await state.http_client.get(
+        "https://id.twitch.tv/oauth2/validate",
+        headers={"Authorization": f"OAuth {raw}"},
+    )
+    j = r.json()
+    print(name, "->", j.get("login"), "| client:", j.get("client_id"),
+          "| scopes:", j.get("scopes"), "| expires_in:", j.get("expires_in"))
+async def main():
+    await check("BOT     ", c.TWITCH_TOKEN)
+    await check("STREAMER", c.TWITCH_USER_TOKEN)
+    await state.http_client.aclose()
+asyncio.run(main())
+PY
+
+Expected:
+
+  BOT      -> <bot> | ... | ['channel:moderate','chat:edit','chat:read']
+  STREAMER -> <streamer> | <app client id> | ['channel:manage:redemptions',
+              'channel:read:redemptions','moderator:read:followers']
+
+
+7.3 Followers (the decisive test)
+
+docker exec -i langchain-agent python - <<'PY'
+import asyncio, state
+from twitch_api import twitch_helix, get_broadcaster_id
+async def main():
+    bid = await get_broadcaster_id()
+    d = await twitch_helix(path="channels/followers",
+                           params={"broadcaster_id": bid, "first": 100},
+                           use_user_token=True)
+    print("broadcaster_id:", bid)
+    print("total:", d.get("total"), "| returned:", len(d.get("data", [])))
+    print("examples:", [f["user_login"] for f in d.get("data", [])[:5]])
+    await state.http_client.aclose()
+asyncio.run(main())
+PY
+
+Expected: total N, returned N.
+
+
+8. DIAGNOSTICS — COMMON ERRORS
+------------------------------
+
+403 on /oauth2/token
+  Client ID/Secret do not match. Usually a regenerated secret with an old
+  .env, a deleted app, or swapped values. Generate a new secret and paste it
+  without spaces or quotes.
+
+400 invalid client
+  The id/secret pair does not exist. Usually a typo in the client id or a
+  secret from another app.
+
+400 invalid client secret
+  The client id is right, the secret is wrong. Regenerate and paste again.
+
+401 Client-Id mismatch (Helix)
+  The token was issued by another app. For the streamer, generate it with the
+  TWITCH_APP_CLIENT_ID client_id. The bot token may come from another app
+  because it is only used for chat.
+
+401 Invalid OAuth token
+  Expired token (~58 days for implicit, ~4 hours for the code flow) or copied
+  with "oauth:" / extra characters.
+
+200 with a correct total but "data": []
+  Twitch ALWAYS returns the total, but only fills the list when:
+    - the token is a user token (not an app token),
+    - it has the moderator:read:followers scope,
+    - the token owner is the broadcaster or a moderator of that channel.
+  This is the classic symptom of a token without the scope. Check it in 7.2.
+
+400 invalid scope
+  Misspelled scope. Use exactly:
+    moderator:read:followers
+    channel:read:redemptions
+    channel:manage:redemptions
+
+redirect_uri mismatch
+  The redirect must be exactly http://localhost:3000, as registered in the app.
+
+TWITCH_STREAMER_ID is not numeric
+  You put a client ID in the broadcaster field. Clear it or use the numeric
+  user id.
+
+Unfollow logs do not appear
+  DISCORD_LOG_CHANNEL_ID_TWITCH is 0. Unfollows only go to that channel (there
+  is no webhook for unfollows; the webhook is for new followers and lives).
+
+"twitch_chat crash: Invalid or unauthorized Access Token"
+  This is the BOT token (<bot>), not the streamer token. Validate it in 7.2.
+
+
+9. WHAT THE BOT DOES WITH THIS
+------------------------------
+
+The poll runs every 60 seconds (twitch_api.twitch_events_loop).
+
+1) Follows/unfollows
+   - channels/followers with a USER token (an app token returns the total and
+     an empty list).
+   - Paginates up to 2000 followers.
+   - Stores:
+       twitch:followers        -> {login: user_id, ...}
+       twitch:followers_total  -> real number from the "total" field
+   - New follower: "⭐ Novo follower" log + webhook.
+   - Unfollow: only a "💔 Unfollow" log to DISCORD_LOG_CHANNEL_ID_TWITCH.
+   - If twitch:followers is "{}" (leftover from an old config), the first poll
+     stores the baseline without announcing everyone, to avoid a flood.
+
+2) Stream status + game/title
+   - streams and channels; uses the app token (public data).
+
+3) Channel points
+   - channel_points/custom_rewards with the streamer user token.
+   - Requires channel:read:redemptions and channel:manage:redemptions.
+
+4) Daily digest (06:00)
+   - Reads twitch:followers_total. Shows "Followers: N".
+   - If the key is missing, falls back to len(twitch:followers).
+
+
+10. DEPLOY AND VERIFY
+---------------------
+
+1. Copy the changed files to the server.
+2. Set DISCORD_LOG_CHANNEL_ID_TWITCH.
+3. docker restart langchain-agent
+4. Check:
+
+docker exec redis redis-cli STRLEN twitch:followers
+docker exec redis redis-cli GET twitch:followers_total
+docker logs langchain-agent --since 5m 2>&1 | grep -i "follow poll"
+
+Expected:
+  STRLEN > 2
+  N
+  no "Follow poll failed"
+
+5. The next digest shows the real number.
+
+
+11. RENEWAL
+-----------
+
+Implicit flow: ~58 days. When it expires, generate another one with the step
+5A link.
+
+Code flow: ~4 hours. Use the refresh_token from step 5B. The bot does not
+refresh it automatically; to automate it, store the refresh token in the .env
+and add refresh logic to twitch_api.py.
+
+The bot does not check expiry before using the token. If it expires, the poll
+fails with 401 and the log shows "Follow poll failed".
+
+
+12. SECURITY
+------------
+
+- The .env contains secrets. Never copy it to the repo, to chat or to docs.
+- Keep chmod 600 on the server's .env.
+- If a secret/token ever appears in plain text, treat it as compromised:
+    1. App console -> New Secret.
+    2. Update TWITCH_APP_CLIENT_SECRET.
+    3. Restart.
+  Rotating the secret does not invalidate user tokens already issued.
+- .env.bak.* backups also contain secrets. Delete them when no longer needed.
+- Do not print tokens in commands. The diagnostics above show login, client
+  id, scopes and expiry; never the token or secret value.
